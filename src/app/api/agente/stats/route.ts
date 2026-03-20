@@ -80,7 +80,7 @@ export async function GET(req: Request) {
         | null
     }
 
-    const itensRows = (itens ?? []) as ItemRow[]
+    const itensRows = (itens ?? []) as unknown as ItemRow[]
     const itemsSafe = itensRows.filter((i) => i.produto?.user_id === ownerId)
 
     const produtosMap = sumBy(

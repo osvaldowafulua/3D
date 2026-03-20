@@ -46,7 +46,7 @@ export async function GET(req: Request) {
       preco: number
       filamento: { nome: string } | null
     }
-    const produtos = data as ProdutoRow[]
+    const produtos = data as unknown as ProdutoRow[]
 
     return NextResponse.json({
       produtos: produtos.map((p) => ({

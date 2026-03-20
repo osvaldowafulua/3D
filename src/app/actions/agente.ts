@@ -1,58 +1,20 @@
 'use server'
 
-import { createServerClient } from '@supabase/auth-helpers-nextjs'
-import { cookies } from 'next/headers'
+import { createAdminClient, getOwnerUid } from '@/lib/supabase/admin'
 import { LeadSchema, NovaEncomendaSchema } from '@/lib/validation/agente'
 
 type ActionOk<T> = { ok: true; data: T }
-type ActionErr = { ok: false; error: string }
+type ActionErr = { ok: false; status: number; error: string }
 type ActionResult<T> = ActionOk<T> | ActionErr
-
-function requiredEnv(name: string): string {
-  const value = process.env[name]
-  if (!value) throw new Error(`Missing env var: ${name}`)
-  return value
-}
-
-async function createAuthedClient() {
-  const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL')
-  const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY')
-  const cookieStore = await cookies()
-
-  return createServerClient(supabaseUrl, anonKey, {
-    cookies: {
-      getAll: async () =>
-        cookieStore.getAll().map((c) => ({ name: c.name, value: c.value })),
-      setAll: async (setCookies) => {
-        for (const item of setCookies) {
-          if (item.value) cookieStore.set({ name: item.name, value: item.value })
-          else cookieStore.delete(item.name)
-        }
-      },
-    },
-  })
-}
-
-async function getOwnerId() {
-  const supabase = await createAuthedClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  const ownerId = session?.user?.id
-  if (!ownerId) throw new Error('Operador não autenticado.')
-  return ownerId
-}
 
 export async function criarOuObterCliente(params: {
   nome: string
   telefone: string
 }): Promise<ActionResult<{ clienteId: string }>> {
   try {
-    const ownerId = await getOwnerId()
-
+    const ownerId = getOwnerUid()
     // Unique por (user_id, telefone) => pode usar upsert para idempotencia.
-    const supabase = await createAuthedClient()
+    const supabase = createAdminClient()
     const { data, error } = await supabase
       .from('clientes')
       .upsert(
@@ -67,103 +29,110 @@ export async function criarOuObterCliente(params: {
       .single()
 
     if (error || !data) {
-      return { ok: false, error: 'Nao foi possivel criar/obter cliente.' }
+      return { ok: false, status: 500, error: 'Nao foi possivel criar/obter cliente.' }
     }
 
     return { ok: true, data: { clienteId: data.id } }
   } catch {
-    return { ok: false, error: 'Operacao nao autorizada.' }
+    return { ok: false, status: 500, error: 'Operacao nao autorizada.' }
   }
 }
 
 export async function criarEncomendaPendente(
   input: unknown,
-): Promise<ActionResult<{ encomendaId: string }>> {
+): Promise<ActionResult<{ encomendaId: string; estado: string }>> {
   try {
-    const parsed = NovaEncomendaSchema.parse(input)
-    const ownerId = await getOwnerId()
+    const parsed = NovaEncomendaSchema.safeParse(input)
+    if (!parsed.success) return { ok: false, status: 400, error: 'Pedido invalido.' }
 
-    const supabase = await createAuthedClient()
+    const ownerId = getOwnerUid()
+    const supabase = createAdminClient()
 
-    let clienteId = parsed.clienteId
-    if (!clienteId) {
-      const clienteRes = await criarOuObterCliente({
-        nome: parsed.clienteNome,
-        telefone: parsed.clienteTelefone,
-      })
+    const clienteRes = parsed.data.clienteId
+      ? { ok: true as const, data: { clienteId: parsed.data.clienteId } }
+      : await criarOuObterCliente({
+          nome: parsed.data.clienteNome,
+          telefone: parsed.data.clienteTelefone,
+        })
 
-      if (!clienteRes.ok) {
-        return { ok: false, error: 'Nao foi possivel associar cliente.' }
-      }
-
-      clienteId = clienteRes.data.clienteId
+    if (!clienteRes.ok) {
+      return { ok: false, status: clienteRes.status, error: clienteRes.error }
     }
 
-    if (!clienteId) {
-      return { ok: false, error: 'Nao foi possivel associar cliente.' }
-    }
+    const clienteId = clienteRes.data.clienteId
 
     const { data: encomenda, error: encomendaError } = await supabase
       .from('encomendas')
       .insert({
         user_id: ownerId,
         cliente_id: clienteId,
-        tipo_entrega: parsed.tipoEntrega,
-        custo_entrega: parsed.custoEntrega ?? 0,
-        notas: parsed.notasAgente,
+        tipo_entrega: parsed.data.tipoEntrega,
+        custo_entrega: parsed.data.custoEntrega ?? 0,
+        notas: parsed.data.notasAgente ?? null,
         estado: 'pendente',
       })
-      .select('id')
+      .select('id,estado')
       .single()
 
     if (encomendaError || !encomenda) {
-      return { ok: false, error: 'Nao foi possivel criar encomenda.' }
+      return { ok: false, status: 500, error: 'Nao foi possivel criar encomenda.' }
     }
 
     const { error: itemError } = await supabase.from('itens_encomenda').insert({
       user_id: ownerId,
       encomenda_id: encomenda.id,
-      produto_id: parsed.produtoId,
-      quantidade: parsed.quantidade,
+      produto_id: parsed.data.produtoId,
+      quantidade: parsed.data.quantidade,
     })
 
     if (itemError) {
-      return { ok: false, error: 'Nao foi possivel criar itens da encomenda.' }
+      return {
+        ok: false,
+        status: 500,
+        error: 'Nao foi possivel criar itens da encomenda.',
+      }
     }
 
-    return { ok: true, data: { encomendaId: encomenda.id } }
+    return {
+      ok: true,
+      data: { encomendaId: encomenda.id, estado: encomenda.estado },
+    }
   } catch {
-    return { ok: false, error: 'Pedido invalido.' }
+    return { ok: false, status: 500, error: 'Erro ao processar solicitação.' }
   }
 }
 
-export async function criarLead(input: unknown): Promise<ActionResult<{ leadId: string }>> {
+export async function criarLead(
+  input: unknown,
+): Promise<ActionResult<{ leadId: string; estado: string }>> {
   try {
-    const parsed = LeadSchema.parse(input)
-    const ownerId = await getOwnerId()
+    const parsed = LeadSchema.safeParse(input)
+    if (!parsed.success) return { ok: false, status: 400, error: 'Pedido invalido.' }
 
-    const supabase = await createAuthedClient()
+    const ownerId = getOwnerUid()
+    const supabase = createAdminClient()
+
     const { data, error } = await supabase
       .from('leads')
       .insert({
         user_id: ownerId,
-        nome: parsed.nome,
-        contacto: parsed.contacto,
-        produto_interesse: parsed.produtoInteresse,
-        origem: parsed.origem,
+        nome: parsed.data.nome,
+        contacto: parsed.data.contacto,
+        produto_interesse: parsed.data.produtoInteresse,
+        origem: parsed.data.origem,
         estado: 'novo',
-        notas: parsed.notas,
+        notas: parsed.data.notas ?? null,
       })
-      .select('id')
+      .select('id,estado')
       .single()
 
     if (error || !data) {
-      return { ok: false, error: 'Nao foi possivel criar lead.' }
+      return { ok: false, status: 500, error: 'Nao foi possivel criar lead.' }
     }
 
-    return { ok: true, data: { leadId: data.id } }
+    return { ok: true, data: { leadId: data.id, estado: data.estado } }
   } catch {
-    return { ok: false, error: 'Lead invalido.' }
+    return { ok: false, status: 500, error: 'Erro ao processar solicitação.' }
   }
 }
 
