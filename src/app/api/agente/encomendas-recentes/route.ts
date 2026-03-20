@@ -38,7 +38,15 @@ export async function GET(req: Request) {
       )
     }
 
-    const encomendaIds = encomendas.map((e: any) => e.id)
+    type EncomendaRow = {
+      id: string
+      tempo_producao_dias: number | null
+      tipo_entrega: 'local' | 'envio' | string
+      entregue_em: string | null
+    }
+
+    const encomendasRows = encomendas as EncomendaRow[]
+    const encomendaIds = encomendasRows.map((e) => e.id)
     if (encomendaIds.length === 0) {
       return NextResponse.json({ encomendas: [] })
     }
@@ -58,8 +66,28 @@ export async function GET(req: Request) {
       )
     }
 
-    const itensPorEncomenda = new Map<string, any[]>()
-    for (const item of itens as any[]) {
+    type ItemRow = {
+      encomenda_id: string
+      quantidade: number
+      produto:
+        | {
+            user_id: string | null
+            nome: string | null
+            filamento: { nome: string | null } | null
+          }
+        | null
+    }
+
+    type EncomendaItem = {
+      produto: string | null
+      quantidade: number
+      tipoFilamento: string | null
+    }
+
+    const itensRows = itens as unknown as ItemRow[]
+    const itensPorEncomenda = new Map<string, EncomendaItem[]>()
+
+    for (const item of itensRows) {
       if (item.produto?.user_id && item.produto.user_id !== ownerId) continue
       const list = itensPorEncomenda.get(item.encomenda_id) ?? []
       list.push({
@@ -71,7 +99,7 @@ export async function GET(req: Request) {
     }
 
     return NextResponse.json({
-      encomendas: encomendas.map((e: any) => ({
+      encomendas: encomendasRows.map((e) => ({
         encomendaId: e.id,
         tempoProducaoDias: e.tempo_producao_dias,
         tipoEntrega: e.tipo_entrega,

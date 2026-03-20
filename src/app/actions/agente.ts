@@ -14,10 +14,10 @@ function requiredEnv(name: string): string {
   return value
 }
 
-function createAuthedClient() {
+async function createAuthedClient() {
   const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL')
   const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY')
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
 
   return createServerClient(supabaseUrl, anonKey, {
     cookies: {
@@ -34,7 +34,7 @@ function createAuthedClient() {
 }
 
 async function getOwnerId() {
-  const supabase = createAuthedClient()
+  const supabase = await createAuthedClient()
   const {
     data: { session },
   } = await supabase.auth.getSession()
@@ -52,7 +52,7 @@ export async function criarOuObterCliente(params: {
     const ownerId = await getOwnerId()
 
     // Unique por (user_id, telefone) => pode usar upsert para idempotencia.
-    const supabase = createAuthedClient()
+    const supabase = await createAuthedClient()
     const { data, error } = await supabase
       .from('clientes')
       .upsert(
@@ -83,23 +83,21 @@ export async function criarEncomendaPendente(
     const parsed = NovaEncomendaSchema.parse(input)
     const ownerId = await getOwnerId()
 
-    const supabase = createAuthedClient()
+    const supabase = await createAuthedClient()
 
-    const clienteId =
-      parsed.clienteId ??
-      (
-        await criarOuObterCliente({
-          nome: parsed.clienteNome,
-          telefone: parsed.clienteTelefone,
-        })
-      ).ok
-        ? (
-            await criarOuObterCliente({
-              nome: parsed.clienteNome,
-              telefone: parsed.clienteTelefone,
-            })
-          ).data.clienteId
-        : undefined
+    let clienteId = parsed.clienteId
+    if (!clienteId) {
+      const clienteRes = await criarOuObterCliente({
+        nome: parsed.clienteNome,
+        telefone: parsed.clienteTelefone,
+      })
+
+      if (!clienteRes.ok) {
+        return { ok: false, error: 'Nao foi possivel associar cliente.' }
+      }
+
+      clienteId = clienteRes.data.clienteId
+    }
 
     if (!clienteId) {
       return { ok: false, error: 'Nao foi possivel associar cliente.' }
@@ -144,7 +142,7 @@ export async function criarLead(input: unknown): Promise<ActionResult<{ leadId: 
     const parsed = LeadSchema.parse(input)
     const ownerId = await getOwnerId()
 
-    const supabase = createAuthedClient()
+    const supabase = await createAuthedClient()
     const { data, error } = await supabase
       .from('leads')
       .insert({

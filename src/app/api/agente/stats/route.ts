@@ -42,13 +42,21 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Erro ao calcular stats.' }, { status: 500 })
     }
 
-    const totalEncomendas = encomendasAll?.length ?? 0
-    const delivered = (encomendasAll ?? []).filter(
-      (e: any) => e.estado === 'entregue' && e.tempo_producao_dias != null,
+    type EncomendaRow = {
+      id: string
+      estado: string
+      tempo_producao_dias: number | null
+    }
+
+    const encomendasRows = (encomendasAll ?? []) as EncomendaRow[]
+    const totalEncomendas = encomendasRows.length
+
+    const delivered = encomendasRows.filter(
+      (e) => e.estado === 'entregue' && e.tempo_producao_dias != null,
     )
     const tempoMedioProducaoDias =
       delivered.length > 0
-        ? delivered.reduce((acc: number, e: any) => acc + (e.tempo_producao_dias ?? 0), 0) /
+        ? delivered.reduce((acc, e) => acc + (e.tempo_producao_dias ?? 0), 0) /
           delivered.length
         : null
 
@@ -61,13 +69,29 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Erro ao calcular stats.' }, { status: 500 })
     }
 
-    const itemsSafe = (itens ?? []).filter((i: any) => i.produto?.user_id === ownerId)
+    type ItemRow = {
+      quantidade: number
+      produto:
+        | {
+            nome: string | null
+            user_id: string | null
+            filamento: { nome: string | null } | null
+          }
+        | null
+    }
 
-    const produtosMap = sumBy(itemsSafe, (i: any) => i.produto?.nome, (i: any) => i.quantidade)
+    const itensRows = (itens ?? []) as ItemRow[]
+    const itemsSafe = itensRows.filter((i) => i.produto?.user_id === ownerId)
+
+    const produtosMap = sumBy(
+      itemsSafe,
+      (i) => i.produto?.nome ?? null,
+      (i) => i.quantidade,
+    )
     const filamentosMap = sumBy(
       itemsSafe,
-      (i: any) => i.produto?.filamento?.nome,
-      (i: any) => i.quantidade,
+      (i) => i.produto?.filamento?.nome ?? null,
+      (i) => i.quantidade,
     )
 
     return NextResponse.json({

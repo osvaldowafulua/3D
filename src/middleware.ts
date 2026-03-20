@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/auth-helpers-nextjs'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import type { Session } from '@supabase/supabase-js'
 
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next()
@@ -13,7 +14,7 @@ export async function middleware(req: NextRequest) {
   // estes endpoints sera via `x-api-key` no proprio handler.
   if (isApiAgente) return res
 
-  let session: any = null
+  let session: Session | null = null
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -34,7 +35,7 @@ export async function middleware(req: NextRequest) {
       const {
         data: { session: fetchedSession },
       } = await supabase.auth.getSession()
-      session = fetchedSession
+      session = fetchedSession as Session | null
     }
   } catch {
     // Em ambiente local/CI pode nao haver Supabase real.

@@ -5,11 +5,6 @@ import { requireAgenteApiKey } from '../_lib/apiKey'
 
 const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional().default(5),
-  ativo: z
-    .union([z.literal('true'), z.literal('false')])
-    .optional()
-    .transform((v) => (v === 'false' ? false : true))
-    .default('true'),
 })
 
 export async function GET(req: Request) {
@@ -24,7 +19,9 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Parâmetros inválidos.' }, { status: 400 })
     }
 
-    const { limit, ativo } = parsed.data
+    const { limit } = parsed.data
+    const ativoParam = url.searchParams.get('ativo')
+    const ativo = ativoParam === 'false' ? false : true
     const ownerId = getOwnerUid()
     const supabase = createAdminClient()
 
@@ -43,8 +40,16 @@ export async function GET(req: Request) {
       )
     }
 
+    type ProdutoRow = {
+      nome: string
+      descricao: string | null
+      preco: number
+      filamento: { nome: string } | null
+    }
+    const produtos = data as ProdutoRow[]
+
     return NextResponse.json({
-      produtos: data.map((p: any) => ({
+      produtos: produtos.map((p) => ({
         nome: p.nome,
         descricao: p.descricao,
         preco: p.preco,
